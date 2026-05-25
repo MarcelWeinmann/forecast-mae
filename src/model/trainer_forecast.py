@@ -18,8 +18,8 @@ class Trainer(pl.LightningModule):
     def __init__(
         self,
         dim=128,
-        historical_steps=50,
-        future_steps=60,
+        historical_steps=10,
+        future_steps=40,
         encoder_depth=4,
         num_heads=8,
         mlp_ratio=4.0,
@@ -85,7 +85,7 @@ class Trainer(pl.LightningModule):
         agent_reg_loss = F.smooth_l1_loss(y_hat_best[..., :2], y)
         agent_cls_loss = F.cross_entropy(pi, best_mode.detach())
 
-        others_reg_mask = ~data["x_padding_mask"][:, 1:, 50:]
+        others_reg_mask = ~data["x_padding_mask"][:, 1:, 10:]
         others_reg_loss = F.smooth_l1_loss(
             y_hat_others[others_reg_mask], y_others[others_reg_mask]
         )

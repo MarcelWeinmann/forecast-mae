@@ -4,8 +4,8 @@ phase: forecast
 target:
   _target_: src.model.trainer_forecast.Trainer
   dim: 128
-  historical_steps: 50
-  future_steps: 60
+  historical_steps: 10
+  future_steps: 40
   encoder_depth: 4
   num_heads: 8
   mlp_ratio: 4.0

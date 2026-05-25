@@ -22,8 +22,8 @@ class ModelMAE(nn.Module):
         drop_path=0.2,
         actor_mask_ratio: float = 0.5,
         lane_mask_ratio: float = 0.5,
-        history_steps: int = 50,
-        future_steps: int = 60,
+        history_steps: int = 10,
+        future_steps: int = 40,
         loss_weight: List[float] = [1.0, 1.0, 0.35],
     ) -> None:
         super().__init__()
@@ -85,7 +85,7 @@ class ModelMAE(nn.Module):
 
         self.future_pred = nn.Linear(embed_dim, future_steps * 2)
         self.history_pred = nn.Linear(embed_dim, history_steps * 2)
-        self.lane_pred = nn.Linear(embed_dim, 20 * 2)
+        self.lane_pred = nn.Linear(embed_dim, 101 * 2)
 
         self.initialize_weights()
 
@@ -184,7 +184,7 @@ class ModelMAE(nn.Module):
         return x_masked, new_key_padding_mask, ids_keep_list
 
     def forward(self, data):
-        hist_padding_mask = data["x_padding_mask"][:, :, :50]
+        hist_padding_mask = data["x_padding_mask"][:, :, :10]
         hist_feat = torch.cat(
             [
                 data["x"],
@@ -198,7 +198,7 @@ class ModelMAE(nn.Module):
         hist_feat = self.hist_embed(hist_feat.permute(0, 2, 1).contiguous())
         hist_feat = hist_feat.view(B, N, hist_feat.shape[-1])
 
-        future_padding_mask = data["x_padding_mask"][:, :, 50:]
+        future_padding_mask = data["x_padding_mask"][:, :, 10:]
         future_feat = torch.cat([data["y"], ~future_padding_mask[..., None]], dim=-1)
         B, N, L, D = future_feat.shape
         future_feat = future_feat.view(B * N, L, D)
@@ -223,8 +223,8 @@ class ModelMAE(nn.Module):
         )
         angles = torch.cat(
             [
-                data["x_angles"][..., 49],
-                data["x_angles"][..., 49],
+                data["x_angles"][..., 9],
+                data["x_angles"][..., 9],
                 data["lane_angles"],
             ],
             dim=1,
@@ -325,7 +325,7 @@ class ModelMAE(nn.Module):
         lane_token = x_decoder[:, -M:]
 
         # lane pred loss
-        lane_pred = self.lane_pred(lane_token).view(B, M, 20, 2)
+        lane_pred = self.lane_pred(lane_token).view(B, M, 101, 2)
         lane_reg_mask = ~lane_padding_mask
         lane_reg_mask[~lane_pred_mask] = False
         lane_pred_loss = F.mse_loss(
@@ -333,19 +333,19 @@ class ModelMAE(nn.Module):
         )
 
         # hist pred loss
-        x_hat = self.history_pred(hist_token).view(-1, 50, 2)
-        x = (data["x_positions"] - data["x_centers"].unsqueeze(-2)).view(-1, 50, 2)
-        x_reg_mask = ~data["x_padding_mask"][:, :, :50]
+        x_hat = self.history_pred(hist_token).view(-1, 10, 2)
+        x = (data["x_positions"] - data["x_centers"].unsqueeze(-2)).view(-1, 10, 2)
+        x_reg_mask = ~data["x_padding_mask"][:, :, :10]
         x_reg_mask[~hist_pred_mask] = False
-        x_reg_mask = x_reg_mask.view(-1, 50)
+        x_reg_mask = x_reg_mask.view(-1, 10)
         hist_loss = F.l1_loss(x_hat[x_reg_mask], x[x_reg_mask])
 
         # future pred loss
-        y_hat = self.future_pred(future_token).view(-1, 60, 2)  # B*N, 120
-        y = data["y"].view(-1, 60, 2)
-        reg_mask = ~data["x_padding_mask"][:, :, 50:]
+        y_hat = self.future_pred(future_token).view(-1, 40, 2)  # B*N, 120
+        y = data["y"].view(-1, 40, 2)
+        reg_mask = ~data["x_padding_mask"][:, :, 10:]
         reg_mask[~future_pred_mask] = False
-        reg_mask = reg_mask.view(-1, 60)
+        reg_mask = reg_mask.view(-1, 40)
         future_loss = F.l1_loss(y_hat[reg_mask], y[reg_mask])
 
         loss = (
@@ -362,9 +362,9 @@ class ModelMAE(nn.Module):
         }
 
         if not self.training:
-            out["x_hat"] = x_hat.view(B, N, 50, 2)
-            out["y_hat"] = y_hat.view(1, B, N, 60, 2)
-            out["lane_hat"] = lane_pred.view(B, M, 20, 2)
+            out["x_hat"] = x_hat.view(B, N, 10, 2)
+            out["y_hat"] = y_hat.view(1, B, N, 40, 2)
+            out["lane_hat"] = lane_pred.view(B, M, 101, 2)
             out["lane_keep_ids"] = lane_ids_keep_list
             out["hist_keep_ids"] = hist_keep_ids_list
             out["fut_keep_ids"] = fut_keep_ids_list

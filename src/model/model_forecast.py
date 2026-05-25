@@ -19,7 +19,7 @@ class ModelForecast(nn.Module):
         mlp_ratio=4.0,
         qkv_bias=False,
         drop_path=0.2,
-        future_steps: int = 60,
+        future_steps: int = 40,
     ) -> None:
         super().__init__()
         self.hist_embed = AgentEmbeddingLayer(
@@ -79,7 +79,7 @@ class ModelForecast(nn.Module):
         return self.load_state_dict(state_dict=state_dict, strict=False)
 
     def forward(self, data):
-        hist_padding_mask = data["x_padding_mask"][:, :, :50]
+        hist_padding_mask = data["x_padding_mask"][:, :, :10]
         hist_key_padding_mask = data["x_key_padding_mask"]
         hist_feat = torch.cat(
             [
@@ -136,7 +136,7 @@ class ModelForecast(nn.Module):
         y_hat, pi = self.decoder(x_agent)
 
         x_others = x_encoder[:, 1:N]
-        y_hat_others = self.dense_predictor(x_others).view(B, -1, 60, 2)
+        y_hat_others = self.dense_predictor(x_others).view(B, -1, 40, 2)
 
         return {
             "y_hat": y_hat,
