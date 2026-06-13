@@ -43,10 +43,13 @@ class Av2Extractor:
         torch.save(data, save_file)
 
     def get_data(self, file: Path):
-        return self.process(file)
+        df, am, scenario_id = load_av2_df(file)
+        return self.process(df, am, scenario_id)
+    
+    def get_data_external(self, data, am, scenario_id):
+        return self.process(data, am, scenario_id)
 
-    def process(self, raw_path: str, agent_id=None):
-        df, am, scenario_id = load_av2_df(raw_path)
+    def process(self, df, am, scenario_id):
         city = df.city.values[0]
         agent_id = df["focal_track_id"].values[0]
 
@@ -126,9 +129,12 @@ class Av2Extractor:
 
         if self.remove_outlier_actors:
             lane_samples = lane_positions[:, ::1, :2].view(-1, 2)
-            nearest_dist = torch.cdist(x[:, 9, :2], lane_samples).min(dim=1).values
-            valid_actor_mask = nearest_dist < 5
-            valid_actor_mask[0] = True  # always keep the target agent
+            if lane_samples.shape[0] == 0:
+                valid_actor_mask = torch.ones(x.shape[0], dtype=torch.bool)
+            else:
+                nearest_dist = torch.cdist(x[:, 9, :2], lane_samples).min(dim=1).values
+                valid_actor_mask = nearest_dist < 5
+                valid_actor_mask[0] = True
 
             x = x[valid_actor_mask]
             x_heading = x_heading[valid_actor_mask]
