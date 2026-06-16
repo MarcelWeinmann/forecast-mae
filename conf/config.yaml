@@ -12,13 +12,17 @@ checkpoint:
 pretrained_weights:
 output: ${model.name}-${model.phase}
 
+# Specific Configs
+use_raceline: False
+use_raceline_velocity: False
+
 # trainer
 num_workers: 8
 gpus: 1
 sync_bn: true
 batch_size: 32
-epochs: 60
-warmup_epochs: 10
+epochs: 1000
+warmup_epochs: 50
 
 # optimizer
 lr: 0.001

@@ -20,12 +20,17 @@ class ModelForecast(nn.Module):
         qkv_bias=False,
         drop_path=0.2,
         future_steps: int = 40,
+        use_raceline_velocity: bool = False,
     ) -> None:
         super().__init__()
         self.hist_embed = AgentEmbeddingLayer(
             4, embed_dim // 4, drop_path_rate=drop_path
         )
+
+        self.use_raceline_velocity = use_raceline_velocity
         self.lane_embed = LaneEmbeddingLayer(3, embed_dim)
+        if self.use_raceline_velocity:
+            self.lane_embed = LaneEmbeddingLayer(4, embed_dim)
 
         self.pos_embed = nn.Sequential(
             nn.Linear(4, embed_dim),
@@ -53,6 +58,8 @@ class ModelForecast(nn.Module):
         self.dense_predictor = nn.Sequential(
             nn.Linear(embed_dim, 256), nn.ReLU(), nn.Linear(256, future_steps * 2)
         )
+
+        self.future_steps = future_steps
 
         self.initialize_weights()
 
@@ -103,7 +110,9 @@ class ModelForecast(nn.Module):
         actor_feat = actor_feat_tmp.view(B, N, actor_feat.shape[-1])
 
         lane_padding_mask = data["lane_padding_mask"]
-        lane_normalized = data["lane_positions"] - data["lane_centers"].unsqueeze(-2)
+        lane_normalized = data["lane_positions"][..., :2] - data["lane_centers"].unsqueeze(-2)
+        if self.use_raceline_velocity:
+            lane_normalized = torch.cat([lane_normalized, data["lane_positions"][..., 2:]], dim=-1)
         lane_normalized = torch.cat(
             [lane_normalized, ~lane_padding_mask[..., None]], dim=-1
         )
@@ -136,7 +145,7 @@ class ModelForecast(nn.Module):
         y_hat, pi = self.decoder(x_agent)
 
         x_others = x_encoder[:, 1:N]
-        y_hat_others = self.dense_predictor(x_others).view(B, -1, 40, 2)
+        y_hat_others = self.dense_predictor(x_others).view(B, -1, self.future_steps, 2)
 
         return {
             "y_hat": y_hat,

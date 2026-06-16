@@ -24,12 +24,20 @@ class Av2Extractor:
         mode: str = "train",
         ignore_type: List[int] = [5, 6, 7, 8, 9],
         remove_outlier_actors: bool = True,
+        num_historical_steps: int = 50,
+        num_future_steps: int = 60,
+        use_raceline: bool = True,
+        use_raceline_velocity: bool = False
     ) -> None:
         self.save_path = save_path
         self.mode = mode
         self.radius = radius
         self.remove_outlier_actors = remove_outlier_actors
         self.ignore_type = ignore_type
+        self.num_historical_steps = num_historical_steps
+        self.num_future_steps = num_future_steps
+        self.use_raceline = use_raceline
+        self.use_raceline_velocity = use_raceline_velocity
 
     def save(self, file: Path):
         assert self.save_path is not None
@@ -55,9 +63,10 @@ class Av2Extractor:
 
         local_df = df[df["track_id"] == agent_id].iloc
         origin = torch.tensor(
-            [local_df[9]["position_x"], local_df[9]["position_y"]], dtype=torch.float
+            [local_df[self.num_historical_steps - 1]["position_x"],
+             local_df[self.num_historical_steps - 1]["position_y"]], dtype=torch.float
         )
-        theta = torch.tensor([local_df[9]["heading"]], dtype=torch.float)
+        theta = torch.tensor([local_df[self.num_historical_steps - 1]["heading"]], dtype=torch.float)
         rotate_mat = torch.tensor(
             [
                 [torch.cos(theta), -torch.sin(theta)],
@@ -66,7 +75,7 @@ class Av2Extractor:
         )
 
         timestamps = list(np.sort(df["timestep"].unique()))
-        cur_df = df[df["timestep"] == timestamps[9]]
+        cur_df = df[df["timestep"] == timestamps[self.num_historical_steps - 1]]
         actor_ids = list(cur_df["track_id"].unique())
         cur_pos = torch.from_numpy(cur_df[["position_x", "position_y"]].values).float()
         out_of_range = np.linalg.norm(cur_pos - origin, axis=1) > self.radius
@@ -78,12 +87,13 @@ class Av2Extractor:
         df = df[df["track_id"].isin(actor_ids)]
 
         # initialization
-        x = torch.zeros(num_nodes, 50, 2, dtype=torch.float)
+        sequence_len = self.num_historical_steps + self.num_future_steps
+        x = torch.zeros(num_nodes, sequence_len, 2, dtype=torch.float)
         x_attr = torch.zeros(num_nodes, 3, dtype=torch.uint8)
-        x_heading = torch.zeros(num_nodes, 50, dtype=torch.float)
-        x_velocity = torch.zeros(num_nodes, 50, dtype=torch.float)
+        x_heading = torch.zeros(num_nodes, sequence_len, dtype=torch.float)
+        x_velocity = torch.zeros(num_nodes, sequence_len, dtype=torch.float)
         x_track_horizon = torch.zeros(num_nodes, dtype=torch.int)
-        padding_mask = torch.ones(num_nodes, 50, dtype=torch.bool)
+        padding_mask = torch.ones(num_nodes, sequence_len, dtype=torch.bool)
 
         for actor_id, actor_df in df.groupby("track_id"):
             node_idx = actor_ids.index(actor_id)
@@ -97,8 +107,8 @@ class Av2Extractor:
             x_track_horizon[node_idx] = node_steps[-1] - node_steps[0]
 
             padding_mask[node_idx, node_steps] = False
-            if padding_mask[node_idx, 9] or object_type in self.ignore_type:
-                padding_mask[node_idx, 10:] = True
+            if padding_mask[node_idx, self.num_historical_steps - 1] or object_type in self.ignore_type:
+                padding_mask[node_idx, self.num_historical_steps:] = True
 
             pos_xy = torch.from_numpy(
                 np.stack(
@@ -132,9 +142,9 @@ class Av2Extractor:
             if lane_samples.shape[0] == 0:
                 valid_actor_mask = torch.ones(x.shape[0], dtype=torch.bool)
             else:
-                nearest_dist = torch.cdist(x[:, 9, :2], lane_samples).min(dim=1).values
+                nearest_dist = torch.cdist(x[:, self.num_historical_steps - 1, :2], lane_samples).min(dim=1).values
                 valid_actor_mask = nearest_dist < 5
-                valid_actor_mask[0] = True
+                valid_actor_mask[0] = True  # always keep the target agent
 
             x = x[valid_actor_mask]
             x_heading = x_heading[valid_actor_mask]
@@ -143,33 +153,33 @@ class Av2Extractor:
             padding_mask = padding_mask[valid_actor_mask]
             num_nodes = x.shape[0]
 
-        x_ctrs = x[:, 9, :2].clone()
-        x_positions = x[:, :10, :2].clone()
-        x_velocity_diff = x_velocity[:, :10].clone()
+        x_ctrs = x[:, self.num_historical_steps - 1, :2].clone()
+        x_positions = x[:, :self.num_historical_steps, :2].clone()
+        x_velocity_diff = x_velocity[:, :self.num_historical_steps].clone()
 
-        x[:, 10:] = torch.where(
-            (padding_mask[:, 9].unsqueeze(-1) | padding_mask[:, 10:]).unsqueeze(-1),
-            torch.zeros(num_nodes, 40, 2),
-            x[:, 10:] - x[:, 9].unsqueeze(-2),
+        x[:, self.num_historical_steps:] = torch.where(
+            (padding_mask[:, self.num_historical_steps - 1].unsqueeze(-1) | padding_mask[:, self.num_historical_steps:]).unsqueeze(-1),
+            torch.zeros(num_nodes, self.num_future_steps, 2),
+            x[:, self.num_historical_steps:] - x[:, self.num_historical_steps - 1].unsqueeze(-2),
         )
-        x[:, 1:10] = torch.where(
-            (padding_mask[:, :9] | padding_mask[:, 1:10]).unsqueeze(-1),
-            torch.zeros(num_nodes, 9, 2),
-            x[:, 1:10] - x[:, :9],
+        x[:, 1:self.num_historical_steps] = torch.where(
+            (padding_mask[:, :self.num_historical_steps - 1] | padding_mask[:, 1:self.num_historical_steps]).unsqueeze(-1),
+            torch.zeros(num_nodes, self.num_historical_steps - 1, 2),
+            x[:, 1:self.num_historical_steps] - x[:, :self.num_historical_steps - 1],
         )
         x[:, 0] = torch.zeros(num_nodes, 2)
 
-        x_velocity_diff[:, 1:10] = torch.where(
-            (padding_mask[:, :9] | padding_mask[:, 1:10]),
-            torch.zeros(num_nodes, 9),
-            x_velocity_diff[:, 1:10] - x_velocity_diff[:, :9],
+        x_velocity_diff[:, 1:self.num_historical_steps] = torch.where(
+            (padding_mask[:, :self.num_historical_steps - 1] | padding_mask[:, 1:self.num_historical_steps]),
+            torch.zeros(num_nodes, self.num_historical_steps - 1),
+            x_velocity_diff[:, 1:self.num_historical_steps] - x_velocity_diff[:, :self.num_historical_steps - 1],
         )
         x_velocity_diff[:, 0] = torch.zeros(num_nodes)
 
-        y = None if self.mode == "test" else x[:, 10:]
+        y = None if self.mode == "test" else x[:, self.num_historical_steps:]
 
         return {
-            "x": x[:, :10],
+            "x": x[:, :self.num_historical_steps],
             "y": y,
             "x_attr": x_attr,
             "x_positions": x_positions,
@@ -191,8 +201,8 @@ class Av2Extractor:
             "city": city,
         }
 
-    @staticmethod
     def get_lane_features(
+        self,
         am: ArgoverseStaticMap,
         query_pos: torch.Tensor,
         origin: torch.Tensor,
@@ -209,10 +219,17 @@ class Av2Extractor:
                 num_interp_pts=segment.right_lane_boundary.xyz.shape[0],
             )
             lane_centerline = torch.from_numpy(lane_centerline[:, :2]).float()
-            lane_centerline = torch.matmul(lane_centerline - origin, rotate_mat)
+            if self.use_raceline:
+                lane_centerline = torch.from_numpy(segment.centerline.xyz[:, [0, 1]]).float()
+            if self.use_raceline and self.use_raceline_velocity:
+                lane_centerline = torch.from_numpy(segment.centerline.xyzv[:, [0, 1, 3]]).float()
+                lane_centerline[:, 2] = torch.clamp(lane_centerline[:, 2], min=0.0) / 70.0
+            lane_centerline_rotated = torch.matmul(lane_centerline[:, :2] - origin, rotate_mat)
+            if self.use_raceline_velocity:
+                lane_centerline_rotated = torch.cat([lane_centerline_rotated, lane_centerline[:, 2:3]], dim=-1)
             is_intersection = am.lane_is_in_intersection(segment.id)
 
-            lane_positions.append(lane_centerline)
+            lane_positions.append(lane_centerline_rotated)
             is_intersections.append(is_intersection)
 
             # get lane attrs
@@ -223,7 +240,7 @@ class Av2Extractor:
             lane_attrs.append(attribute)
 
         lane_positions = pad_sequence(lane_positions, batch_first=True)
-        lanes_ctr = lane_positions[:, 9:11].mean(dim=1)
+        lanes_ctr = lane_positions[:, 9:11, :2].mean(dim=1)
         lanes_angle = torch.atan2(
             lane_positions[:, 10, 1] - lane_positions[:, 9, 1],
             lane_positions[:, 10, 0] - lane_positions[:, 9, 0],

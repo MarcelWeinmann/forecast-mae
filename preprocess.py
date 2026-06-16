@@ -35,7 +35,11 @@ def preprocess(args):
             extractor = Av2ExtractorMultiAgent(save_path=save_dir, mode=mode)
         else:
             save_dir = data_root / "forecast-mae" / mode
-            extractor = Av2Extractor(save_path=save_dir, mode=mode)
+            extractor = Av2Extractor(save_path=save_dir, mode=mode,
+                                     num_historical_steps=args.num_historical_steps,
+                                     num_future_steps=args.num_future_steps,
+                                     use_raceline=args.use_raceline,
+                                     use_raceline_velocity=args.use_raceline_velocity)
 
         save_dir.mkdir(exist_ok=True, parents=True)
         scenario_files = glob_files(data_root, mode)
@@ -61,6 +65,9 @@ if __name__ == "__main__":
     parser.add_argument("--batch", "-b", type=int, default=50)
     parser.add_argument("--parallel", "-p", action="store_true")
     parser.add_argument("--multiagent", "-m", action="store_true")
-
+    parser.add_argument("--num_historical_steps", type=int, default=50)
+    parser.add_argument("--num_future_steps", type=int, default=60)
+    parser.add_argument('--use_raceline', action='store_true')
+    parser.add_argument('--use_raceline_velocity', action='store_true')
     args = parser.parse_args()
     preprocess(args)

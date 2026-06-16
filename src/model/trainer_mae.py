@@ -28,6 +28,7 @@ class Trainer(pl.LightningModule):
         lr: float = 1e-3,
         loss_weight=[1.0, 1.0, 0.35],
         weight_decay: float = 1e-4,
+        use_raceline_velocity: bool = False,
     ) -> None:
         super(Trainer, self).__init__()
         self.epochs = epochs
@@ -49,6 +50,7 @@ class Trainer(pl.LightningModule):
             history_steps=historical_steps,
             future_steps=future_steps,
             loss_weight=loss_weight,
+            use_raceline_velocity=use_raceline_velocity
         )
 
     def forward(self, data):

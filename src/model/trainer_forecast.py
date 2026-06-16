@@ -30,6 +30,7 @@ class Trainer(pl.LightningModule):
         warmup_epochs: int = 10,
         epochs: int = 60,
         weight_decay: float = 1e-4,
+        use_raceline_velocity: bool = False,
     ) -> None:
         super(Trainer, self).__init__()
         self.warmup_epochs = warmup_epochs
@@ -47,6 +48,7 @@ class Trainer(pl.LightningModule):
             qkv_bias=qkv_bias,
             drop_path=drop_path,
             future_steps=future_steps,
+            use_raceline_velocity=use_raceline_velocity
         )
 
         if pretrained_weights is not None:
