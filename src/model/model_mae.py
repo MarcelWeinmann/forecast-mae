@@ -338,8 +338,9 @@ class ModelMAE(nn.Module):
         lane_pred = self.lane_pred(lane_token).view(B, M, 101, 2)
         lane_reg_mask = ~lane_padding_mask
         lane_reg_mask[~lane_pred_mask] = False
+        target_xy = lane_normalized[..., :2] 
         lane_pred_loss = F.mse_loss(
-            lane_pred[lane_reg_mask], lane_normalized[lane_reg_mask]
+            lane_pred[lane_reg_mask], target_xy[lane_reg_mask]
         )
 
         # hist pred loss
